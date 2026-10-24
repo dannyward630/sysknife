@@ -21,6 +21,14 @@ Releases before `0.2.5` predate the public launch; their notes live in the
   SysKnife's own token and receipt comparisons use `subtle` and are not
   affected. No API changes.
 
+### Fixed
+
+- **A successful automatic rollback shows as `rolled back` in the CLI.**
+  ([#632](https://github.com/lacs-project/sysknife/pull/632))
+  The CLI had no arm for `RolledBack` and printed `⚠ unknown`, and it dropped
+  the job's `rollback_ref`. It now prints `rolled back` and the line
+  `rolled back with: rpm-ostree rollback`.
+
 ## [0.26.0] — 2026-10-21
 
 ### Security
