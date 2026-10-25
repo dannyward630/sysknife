@@ -189,13 +189,6 @@ def cmd_check(cfg: dict, expected: str | None) -> None:
     print(f"All release versions match {version} ({pin_count} internal dependency pins checked).")
 
 
-def cmd_pincount(cfg: dict) -> None:
-    n = sum(len(internal_pins(cfg, rel)) for rel in cfg["cargo_manifests"])
-    if n == 0:
-        die("no internal dependency pins found; the registry's manifests are stale")
-    print(n)
-
-
 def cmd_sites(cfg: dict) -> None:
     seen = list(cfg["cargo_manifests"])
     seen += [s["file"] for s in cfg["json_sites"]]
@@ -213,9 +206,29 @@ def release_files(cfg: dict) -> list[str]:
     return list(dict.fromkeys(files))
 
 
-def ignore_generated(_directory: str, names: list[str]) -> set[str]:
-    generated = {".git", "__pycache__", ".venv", "dist", "node_modules", "target"}
-    return generated.intersection(names)
+def copy_tracked_files(destination: Path) -> None:
+    result = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True
+    )
+    if result.returncode:
+        detail = os.fsdecode(result.stderr).strip()
+        die(f"git ls-files failed while staging a release bump: {detail}")
+    paths = result.stdout.split(b"\0")
+    if not any(paths):
+        die("git ls-files returned no tracked paths; cannot stage a release bump")
+    for raw_path in paths:
+        if not raw_path:
+            continue
+        rel = Path(os.fsdecode(raw_path))
+        source = ROOT / rel
+        if not source.exists() and not source.is_symlink():
+            continue
+        staged = destination / rel
+        staged.parent.mkdir(parents=True, exist_ok=True)
+        if source.is_symlink():
+            staged.symlink_to(os.readlink(source))
+        elif source.is_file():
+            shutil.copy2(source, staged)
 
 
 def install_staged_files(cfg: dict, staged_root: Path, temp_root: Path) -> None:
@@ -262,7 +275,8 @@ def cmd_bump(cfg: dict, target: str, when: str | None) -> None:
         with tempfile.TemporaryDirectory(prefix=".release-version-bump-", dir=ROOT.parent) as temp:
             temp_root = Path(temp)
             staged_root = temp_root / ROOT.name
-            shutil.copytree(ROOT, staged_root, symlinks=True, ignore=ignore_generated)
+            staged_root.mkdir()
+            copy_tracked_files(staged_root)
             staged = runpy.run_path(str(staged_root / "scripts" / "release_versions.py"))
             staged_cfg = staged["load_config"]()
             staged["cmd_bump_in_place"](staged_cfg, target, when)
@@ -376,8 +390,6 @@ def main() -> None:
     elif cmd == "check":
         expected = argv[1].lstrip("v") if len(argv) > 1 else None
         cmd_check(cfg, expected)
-    elif cmd == "pincount":
-        cmd_pincount(cfg)
     elif cmd == "sites":
         cmd_sites(cfg)
     elif cmd == "bump":

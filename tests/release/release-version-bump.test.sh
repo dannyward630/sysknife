@@ -25,15 +25,30 @@ make_fixture() {
 
 failed="$scratch/failed"
 make_fixture "$failed"
+current_version="$(python3 "$failed/scripts/release_versions.py" values | sed -n '1p')"
+target_version="$(python3 - "$current_version" <<'PY'
+import sys
+
+major, minor, patch = map(int, sys.argv[1].split("."))
+print(f"{major}.{minor}.{patch + 1}")
+PY
+)"
 mkdir -p "$scratch/bin"
+mkdir -p "$failed/scratch/untracked"
+printf '%s\n' 'must not be copied into the staged tree' >"$failed/scratch/untracked/marker.txt"
 cat >"$scratch/bin/cargo" <<'SH'
 #!/usr/bin/env sh
+if [ -e scratch/untracked/marker.txt ]; then
+    printf 'untracked worktree files were copied into the staged tree\n' >&2
+    exit 2
+fi
 printf 'simulated offline lockfile refresh failure\n' >&2
 exit 1
 SH
 chmod +x "$scratch/bin/cargo"
 
-if output="$(PATH="$scratch/bin:$PATH" bash "$failed/scripts/bump_version.sh" 0.26.1 --date 2026-10-22 2>&1)"; then
+failed_state="$(git -C "$failed" status --porcelain)"
+if output="$(PATH="$scratch/bin:$PATH" bash "$failed/scripts/bump_version.sh" "$target_version" --date 2026-10-22 2>&1)"; then
     printf 'release-version-bump: failed lock refresh unexpectedly succeeded\n' >&2
     exit 1
 fi
@@ -41,7 +56,7 @@ grep -Fq 'simulated offline lockfile refresh failure' <<<"$output" || {
     printf 'release-version-bump: injected Cargo failure was not reported: %s\n' "$output" >&2
     exit 1
 }
-if [ -n "$(git -C "$failed" status --porcelain)" ]; then
+if [ "$(git -C "$failed" status --porcelain)" != "$failed_state" ]; then
     printf 'release-version-bump: failed lock refresh changed the fixture:\n%s\n' \
         "$(git -C "$failed" status --short)" >&2
     exit 1
@@ -55,11 +70,10 @@ from pathlib import Path
 
 path = Path(sys.argv[1])
 text = path.read_text()
-old = "## [Unreleased]\n\n## [0.26.0]"
-new = "## [Unreleased]\n\n- Fixture release note.\n\n## [0.26.0]"
-if old not in text:
-    raise SystemExit("fixture could not add a note to the Unreleased section")
-path.write_text(text.replace(old, new, 1))
+heading = "## [Unreleased]"
+if text.count(heading) != 1:
+    raise SystemExit("fixture could not find the Unreleased section")
+path.write_text(text.replace(heading, heading + "\n\n- Fixture release note.", 1))
 PY
 mkdir -p "$scratch/bin-success"
 cat >"$scratch/bin-success/cargo" <<'SH'
@@ -97,8 +111,8 @@ if changed != set(members):
 lock.write_text(text)
 SH
 chmod +x "$scratch/bin-success/cargo"
-if output="$(PATH="$scratch/bin-success:$PATH" bash "$success/scripts/bump_version.sh" 0.26.1 --date 2026-10-22 2>&1)"; then
-    grep -Fq 'All release versions match 0.26.1' <<<"$output" || {
+if output="$(PATH="$scratch/bin-success:$PATH" bash "$success/scripts/bump_version.sh" "$target_version" --date 2026-10-22 2>&1)"; then
+    grep -Fq "All release versions match $target_version" <<<"$output" || {
         printf 'release-version-bump: successful bump did not verify all sites: %s\n' "$output" >&2
         exit 1
     }
@@ -111,8 +125,8 @@ if [ -z "$success_state" ]; then
     printf 'release-version-bump: successful bump did not install version files\n' >&2
     exit 1
 fi
-if output="$(PATH="$scratch/bin-success:$PATH" bash "$success/scripts/bump_version.sh" 0.26.1 --date 2026-10-22 2>&1)"; then
-    grep -Fq 'already at 0.26.1' <<<"$output" || {
+if output="$(PATH="$scratch/bin-success:$PATH" bash "$success/scripts/bump_version.sh" "$target_version" --date 2026-10-22 2>&1)"; then
+    grep -Fq "already at $target_version" <<<"$output" || {
         printf 'release-version-bump: consistent rerun was not recognized: %s\n' "$output" >&2
         exit 1
     }
@@ -127,7 +141,7 @@ fi
 
 partial="$scratch/partial"
 make_fixture "$partial"
-python3 - "$partial" 0.26.1 <<'PY'
+python3 - "$partial" "$target_version" <<'PY'
 import json
 import re
 import sys
@@ -163,7 +177,7 @@ for site in config["json_sites"]:
 PY
 
 before="$(git -C "$partial" status --porcelain)"
-if output="$(PATH="$scratch/bin:$PATH" bash "$partial/scripts/bump_version.sh" 0.26.1 --date 2026-10-22 2>&1)"; then
+if output="$(PATH="$scratch/bin:$PATH" bash "$partial/scripts/bump_version.sh" "$target_version" --date 2026-10-22 2>&1)"; then
     printf 'release-version-bump: rerun accepted stale generated files\n' >&2
     exit 1
 fi

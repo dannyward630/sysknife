@@ -14,18 +14,29 @@ for path in "${paths[@]}"; do
     cp "$repo_root/$path" "$fixture/$path"
 done
 
-python3 "$fixture/scripts/release_versions.py" check 0.26.0 >/dev/null
+current_version="$(python3 "$fixture/scripts/release_versions.py" values | sed -n '1p')"
+stale_version="$(python3 - "$current_version" <<'PY'
+import sys
+
+major, minor, patch = map(int, sys.argv[1].split("."))
+print(f"{major}.{minor}.{patch + 1}")
+PY
+)"
+python3 "$fixture/scripts/release_versions.py" check "$current_version" >/dev/null
 cp "$fixture/Cargo.lock" "$fixture/Cargo.lock.baseline"
-python3 - "$fixture/Cargo.lock" <<'PY'
+python3 - "$fixture/Cargo.lock" "$current_version" "$stale_version" <<'PY'
 import re
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
-text, replacements = re.subn(r'(^name = "sysknife-cli"\nversion = ")0\.26\.0("$)', r'\g<1>0.25.0\2',
+current, stale = sys.argv[2:]
+pattern = rf'(^name = "sysknife-cli"\nversion = "){re.escape(current)}("$)'
+replacement = rf'\g<1>{stale}\2'
+text, replacements = re.subn(pattern, replacement,
                              path.read_text(), count=1, flags=re.M)
 if replacements != 1:
-    raise SystemExit("fixture could not find sysknife-cli 0.26.0 in Cargo.lock")
+    raise SystemExit(f"fixture could not find sysknife-cli {current} in Cargo.lock")
 path.write_text(text)
 PY
 if output="$(python3 "$fixture/scripts/release_versions.py" check 2>&1)"; then
@@ -43,15 +54,18 @@ grep -Fq 'sysknife-cli' <<<"$output" || {
 mv "$fixture/Cargo.lock.baseline" "$fixture/Cargo.lock"
 
 cp "$fixture/CHANGELOG.md" "$fixture/CHANGELOG.md.baseline"
-python3 - "$fixture/CHANGELOG.md" <<'PY'
+python3 - "$fixture/CHANGELOG.md" "$current_version" "$stale_version" <<'PY'
 import re
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
-text, replacements = re.subn(r'(^## \[)0\.26\.0(\])', r'\g<1>0.25.0\2', path.read_text(), count=1, flags=re.M)
+current, stale = sys.argv[2:]
+pattern = rf'(^## \[){re.escape(current)}(\])'
+replacement = rf'\g<1>{stale}\2'
+text, replacements = re.subn(pattern, replacement, path.read_text(), count=1, flags=re.M)
 if replacements != 1:
-    raise SystemExit("fixture could not find the latest release heading")
+    raise SystemExit(f"fixture could not find the {current} release heading")
 path.write_text(text)
 PY
 if output="$(python3 "$fixture/scripts/release_versions.py" check 2>&1)"; then
