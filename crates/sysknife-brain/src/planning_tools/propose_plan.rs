@@ -504,7 +504,7 @@ fn forbidden_credential_param(action: &str, params: &serde_json::Value) -> Optio
 ///
 /// No hint at all still offers every action that does not require credential
 /// entry — without a detected family there is no basis for a distro exclusion.
-pub(crate) fn available_on(action: &str, hint: Option<&sysknife_types::DistroHint>) -> bool {
+fn available_on(action: &str, hint: Option<&sysknife_types::DistroHint>) -> bool {
     if requires_unavailable_credential_entry(action) {
         return false;
     }
@@ -796,36 +796,43 @@ const PARAMETER_SECTIONS: &[ParameterSection] = &[
     ParameterSection {
         prefix: "\n• Identity: ",
         prefix_without_toolboxes: None,
-        line_separator: "",
-        lines: &[ParameterLine {
-            examples: &[
-                ParameterExample {
-                    actions: &[("SetHostname", "SetHostname")],
-                    action_separator: "",
-                    template: "{actions}: {params}",
-                    params: r#"{"hostname":"myhost"}"#,
-                },
-                ParameterExample {
-                    actions: &[("SetTimezone", "SetTimezone")],
-                    action_separator: "",
-                    template: "{actions}: {params}",
-                    params: r#"{"timezone":"America/Chicago"}"#,
-                },
-                ParameterExample {
-                    actions: &[("SetLocale", "SetLocale")],
-                    action_separator: "",
-                    template: "{actions}: {params}",
-                    params: r#"{"locale":"en_US.UTF-8"}"#,
-                },
-                ParameterExample {
-                    actions: &[("SetNtp", "SetNtp")],
-                    action_separator: "",
-                    template: "{actions}: {params}",
-                    params: r#"{"enabled":true}"#,
-                },
-            ],
-            separator: "; ",
-        }],
+        line_separator: "\n  ",
+        lines: &[
+            ParameterLine {
+                examples: &[
+                    ParameterExample {
+                        actions: &[("SetHostname", "SetHostname")],
+                        action_separator: "",
+                        template: "{actions}: {params}",
+                        params: r#"{"hostname":"myhost"}"#,
+                    },
+                    ParameterExample {
+                        actions: &[("SetTimezone", "SetTimezone")],
+                        action_separator: "",
+                        template: "{actions}: {params}",
+                        params: r#"{"timezone":"America/Chicago"}"#,
+                    },
+                ],
+                separator: "; ",
+            },
+            ParameterLine {
+                examples: &[
+                    ParameterExample {
+                        actions: &[("SetLocale", "SetLocale")],
+                        action_separator: "",
+                        template: "{actions}: {params}",
+                        params: r#"{"locale":"en_US.UTF-8"}"#,
+                    },
+                    ParameterExample {
+                        actions: &[("SetNtp", "SetNtp")],
+                        action_separator: "",
+                        template: "{actions}: {params}",
+                        params: r#"{"enabled":true}"#,
+                    },
+                ],
+                separator: "; ",
+            },
+        ],
     },
     ParameterSection {
         prefix: "\n• Layering: ",
@@ -1873,6 +1880,14 @@ mod tests {
         ));
         assert!(description.contains("• Containers (all require username):"));
         assert!(!description.contains("Toolbox"));
+        // A section whose actions are all withheld must vanish with its
+        // parameters, not leave a bare `: {...}` line behind.
+        for orphan in ["• Layering", "• Repos", "target_ref", "repo_url"] {
+            assert!(
+                !description.contains(orphan),
+                "Debian params description kept {orphan} without its actions"
+            );
+        }
     }
 
     #[test]
@@ -1900,6 +1915,9 @@ mod tests {
         assert!(
             description.contains(r#"RebaseSystem: {"target_ref":"fedora/40/x86_64/silverblue"}"#)
         );
+        assert!(description.contains(
+            "• Identity: SetHostname: {\"hostname\":\"myhost\"}; SetTimezone: {\"timezone\":\"America/Chicago\"}\n  SetLocale: {\"locale\":\"en_US.UTF-8\"}; SetNtp: {\"enabled\":true}"
+        ));
     }
 
     #[test]
