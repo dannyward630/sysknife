@@ -12,6 +12,25 @@ Releases before `0.2.5` predate the public launch; their notes live in the
 
 ## [Unreleased]
 
+## [0.26.1] — 2026-10-24
+
+### Security
+
+- **The lockfile moves ctutils to 0.4.4 for RUSTSEC-2026-0385.** ctutils 0.4.2
+  could compile its constant-time mask helpers to branches, and on 32-bit
+  targets its `u128` comparisons branched too. It reaches SysKnife through
+  digest 0.11 (ed25519-dalek, hmac, and the SCRAM login in sqlx-postgres).
+  SysKnife's own token and receipt comparisons use `subtle` and are not
+  affected. No API changes.
+
+### Fixed
+
+- **A successful automatic rollback shows as `rolled back` in the CLI.**
+  ([#632](https://github.com/lacs-project/sysknife/pull/632))
+  The CLI had no arm for `RolledBack` and printed `⚠ unknown`, and it dropped
+  the job's `rollback_ref`. It now prints `rolled back` and the line
+  `rolled back with: rpm-ostree rollback`.
+
 ## [0.26.0] — 2026-10-21
 
 ### Security
