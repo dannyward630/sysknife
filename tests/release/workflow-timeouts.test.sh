@@ -14,8 +14,8 @@ except ImportError:
     sys.exit("workflow-timeouts: PyYAML is required")
 
 
-def missing_timeouts(paths):
-    missing = []
+def invalid_timeouts(paths):
+    invalid = []
     for path in paths:
         try:
             workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -26,9 +26,12 @@ def missing_timeouts(paths):
         for name, job in workflow["jobs"].items():
             if not isinstance(job, dict):
                 raise RuntimeError(f"{path} job {name} is not a mapping")
-            if "uses" not in job and "timeout-minutes" not in job:
-                missing.append(f"{path.name}/{name}")
-    return missing
+            if "uses" in job:
+                continue
+            timeout = job.get("timeout-minutes")
+            if type(timeout) is not int or timeout <= 0:
+                invalid.append(f"{path.name}/{name}")
+    return invalid
 
 
 with tempfile.TemporaryDirectory(prefix="workflow-timeouts-") as directory:
@@ -42,12 +45,34 @@ with tempfile.TemporaryDirectory(prefix="workflow-timeouts-") as directory:
         "    runs-on: ubuntu-latest\n"
         "    timeout-minutes: 5\n"
         "    steps: []\n"
+        "  empty:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    timeout-minutes:\n"
+        "    steps: []\n"
+        "  string:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    timeout-minutes: '5'\n"
+        "    steps: []\n"
+        "  zero:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    timeout-minutes: 0\n"
+        "    steps: []\n"
+        "  boolean:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    timeout-minutes: true\n"
+        "    steps: []\n"
         "  reusable:\n"
         "    uses: ./.github/workflows/publish-mcp.yml\n",
         encoding="utf-8",
     )
-    expected = ["fixture.yml/fast"]
-    actual = missing_timeouts([fixture])
+    expected = [
+        "fixture.yml/fast",
+        "fixture.yml/empty",
+        "fixture.yml/string",
+        "fixture.yml/zero",
+        "fixture.yml/boolean",
+    ]
+    actual = invalid_timeouts([fixture])
     if actual != expected:
         raise RuntimeError(f"fixture expected {expected}, got {actual}")
 
@@ -56,10 +81,10 @@ paths = sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")])
 if not paths:
     raise RuntimeError(f"no workflow files found under {workflows}")
 
-missing = missing_timeouts(paths)
-if missing:
-    print("FAIL: workflow jobs missing timeout-minutes:", file=sys.stderr)
-    for job in missing:
+invalid = invalid_timeouts(paths)
+if invalid:
+    print("FAIL: workflow jobs missing positive integer timeout-minutes:", file=sys.stderr)
+    for job in invalid:
         print(f"  {job}", file=sys.stderr)
     sys.exit(1)
 
