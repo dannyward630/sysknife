@@ -393,7 +393,7 @@ jobs:
           checklist_title="${checklist_prefix}${VERSION}"
           open_checklists="$(gh issue list --repo "$REPO" --state open \
             --search 'in:title "Post-release manual steps for"' \
-            --limit 100 --json number,title \
+            --limit 1000 --json number,title \
             --jq '.[] | [.number, .title] | @tsv')"
           current_issue=""
           while IFS=$'\t' read -r number title; do

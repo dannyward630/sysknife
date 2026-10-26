@@ -218,6 +218,8 @@ if list_index < 0 or state_index < list_index or state_index > close_index:
     fail("workflow must only close open checklists")
 if '--search \'in:title "Post-release manual steps for"\'' not in run[:close_index]:
     fail("workflow must search open issues by the checklist title prefix")
+if "--limit 1000 --json number,title" not in run[:close_index]:
+    fail("workflow must inspect the full supported issue result set")
 prefix_guard = run.find('[[ "$title" == "$checklist_prefix"* ]] || continue')
 if prefix_guard < 0 or prefix_guard > close_index:
     fail("workflow must close only titles with the post-release checklist prefix")
