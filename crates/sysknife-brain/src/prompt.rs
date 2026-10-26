@@ -1567,6 +1567,7 @@ mod tests {
 
         let ubuntu = build_system_prompt(None, Some(&debian_hint()));
         assert!(!ubuntu.contains("query_packages"));
+        assert!(ubuntu.contains("`query_logs` (params: `unit`)"));
         assert!(ubuntu.contains("AptInstall"));
         assert!(ubuntu.contains("already installed"));
 
