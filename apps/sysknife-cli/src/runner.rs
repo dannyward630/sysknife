@@ -1230,20 +1230,21 @@ pub async fn run_audit_export(args: AuditExportArgs, log: &Logger) -> Result<(),
 /// tampered — the result is unknown until the operator resolves the
 /// underlying access problem.
 pub async fn run_audit_verify(args: AuditVerifyArgs, log: &Logger) -> Result<(), CliError> {
-    use sysknife_core::config::LacsConfig;
-    use sysknife_daemon::audit_chain::AuditKey;
-
-    // Honour the same `[storage]` config the daemon uses, so `sysknife audit
-    // verify` works against whichever backend is in production. Without this,
-    // a Postgres-backed deployment can never verify its chain from the CLI.
-    let lacs_config = LacsConfig::load();
-
-    // A system-installed daemon keeps its chain in /var/lib/sysknife, but that
-    // path reaches it through the unit's own Environment= lines, which a CLI run
-    // by an operator never sees. Resolving only the per-user path therefore made
-    // `audit verify` read an absent store and report the chain as unverifiable
-    // on a perfectly healthy install.
+    let lacs_config = sysknife_core::config::LacsConfig::load();
     let store = sysknife_core::resolve_audit_store();
+    run_audit_verify_with_store(args, log, &lacs_config, &store).await
+}
+
+/// Verify with a store selection supplied by the caller. Keeping this path
+/// shared lets tests compare the CLI and MCP readers for a simulated system
+/// store without writing under `/var/lib`.
+pub(crate) async fn run_audit_verify_with_store(
+    args: AuditVerifyArgs,
+    log: &Logger,
+    lacs_config: &sysknife_core::config::LacsConfig,
+    store: &sysknife_core::AuditStoreChoice,
+) -> Result<(), CliError> {
+    use sysknife_daemon::audit_chain::AuditKey;
 
     let label_for_diag = match lacs_config.storage.as_ref() {
         Some(s) if s.backend.eq_ignore_ascii_case("postgres") => "postgres".to_string(),
@@ -1338,7 +1339,7 @@ pub async fn run_audit_verify(args: AuditVerifyArgs, log: &Logger) -> Result<(),
     // deleted still verifies. Only a previously anchored tip catches that, and
     // this command used to report `audit_anchor: {configured: true}` without
     // ever reading the anchor — implying a check it did not perform.
-    let anchor = verify_configured_anchor(&lacs_config, &db_path, &verifier).await;
+    let anchor = verify_configured_anchor(lacs_config, &db_path, &verifier).await;
     let exit_code = combined_verification_exit_code(&outcome, anchor.as_ref());
     emit_verification(&args, log, &outcome, &label_for_diag, anchor.as_ref());
     if exit_code == 0 {

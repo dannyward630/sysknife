@@ -2001,12 +2001,42 @@ mod tests {
         drop(store);
 
         let lacs_config = sysknife_core::config::LacsConfig::default();
-        let audit_store = sysknife_core::AuditStoreChoice::System(db_path.clone());
+        let per_user_path = temp.path().join("xdg/state/sysknife/daemon.sqlite");
+        let audit_store = sysknife_core::choose_audit_store_with_paths(
+            None,
+            per_user_path.clone(),
+            per_user_path.exists(),
+            db_path.clone(),
+            db_path.exists(),
+        );
+        assert!(
+            matches!(&audit_store, sysknife_core::AuditStoreChoice::System(_)),
+            "a populated system store must win when the per-user store is absent"
+        );
         let store_note = audit_store
             .note()
             .expect("system store needs an explanation");
         let report = audit_verify_local_store_with_store(&lacs_config, &audit_store).await;
+        let cli_log_path = temp.path().join("cli-audit-report.json");
+        let cli_log =
+            crate::runner::Logger::new(Some(&cli_log_path)).expect("create CLI report capture");
+        crate::runner::run_audit_verify_with_store(
+            crate::cli::AuditVerifyArgs {
+                json: true,
+                pubkey: None,
+            },
+            &cli_log,
+            &lacs_config,
+            &audit_store,
+        )
+        .await
+        .expect("CLI verify the selected system store");
+        let cli_report: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&cli_log_path).expect("read CLI report"))
+                .expect("CLI emits a JSON report");
         assert_eq!(report.status, "intact");
+        assert_eq!(cli_report["status"], report.status);
+        assert_eq!(cli_report["backend"], report.backend);
         assert_eq!(report.backend, db_path.display().to_string());
         assert_eq!(
             report.audit_store_note.as_deref(),
