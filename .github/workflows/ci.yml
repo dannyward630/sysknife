@@ -65,11 +65,20 @@ jobs:
       - name: Check release version consistency
         run: bash scripts/check_release_versions.sh
 
+      - name: Test atomic release version bumps
+        run: bash tests/release/release-version-bump.test.sh
+
+      - name: Test generated release version consistency
+        run: bash tests/release/release-version-check.test.sh
+
       - name: Check the release waits for crates.io to index each crate
         run: bash tests/release/crates-index-poll.test.sh
 
       - name: Check GitHub release creation is safe to re-run
         run: bash tests/release/release-create-rerun.test.sh
+
+      - name: Check npm publishes only after crates.io
+        run: bash tests/release/release-publish-order.test.sh
 
       - name: Test internal dependency pin coverage
         run: bash tests/release/release-version-pins.test.sh

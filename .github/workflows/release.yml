@@ -155,7 +155,7 @@ jobs:
 
   publish-npm:
     name: Publish sysknife-setup to npm
-    needs: [preflight, build]
+    needs: [preflight, build, publish-crates]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
