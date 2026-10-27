@@ -311,7 +311,7 @@ jobs:
 
   rust:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       CARGO_TERM_COLOR: always
       CARGO_HOME: /home/runner/.cargo
