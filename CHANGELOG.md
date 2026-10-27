@@ -12,6 +12,41 @@ Releases before `0.2.5` predate the public launch; their notes live in the
 
 ## [Unreleased]
 
+### Changed
+
+- **Published figures are rendered from their sources, never typed.**
+  `scripts/render_figures.py` rewrites every `<!-- fig:NAME -->` marker in the
+  README and docs (test counts, action counts, story-set sizes, recorded pass
+  rates), and `scripts/check_evidence_claims.py` now refuses a figure outside a
+  marker. Figures that routine PRs move are rounded floors ("2,000+"); recorded
+  story pass rates stay exact. `UPDATE_TEST_BASELINE=1 scripts/test_baseline.sh`
+  records the evidence and re-renders the docs in one step, and
+  `scripts/check_public_claims.sh` runs `render_figures.py --check`. The README
+  shows the exact Rust and frontend test counts as live badges read from
+  `tests/evidence/workspace-tests.json`. The README line that said the Ubuntu
+  suite "has since grown to 96" was already stale (it holds 99) and is now a
+  derived figure.
+
+### Security
+
+- **`request_hash` is now keyed: an audit export is no longer an offline
+  cracking target.** ([#268](https://github.com/lacs-project/sysknife/issues/268))
+  The column every signed chain row carries was a single unsalted SHA-256 over
+  the action name and the *unredacted* parameters, and `sysknife audit export`
+  serialises it. For a low-entropy, partly-public parameter set — `ConfigureWifi`,
+  where the SSID broadcasts and only the passphrase is unknown — any holder of
+  an export could brute-force the preimage on a GPU. The hash is now an
+  HMAC-SHA256 under a key derived (HKDF, domain-separated) from the audit key,
+  which never leaves the host; the preview/execute binding is unchanged. New
+  rows are written under `chain_version = 4`, so an auditor can tell which
+  scheme each row's hash uses. Rows written by earlier releases keep their
+  original hashes — rewriting them would break their signatures — so the fix
+  is forward-only and legacy rows in an export remain crackable;
+  `docs/the-audit-chain.md` now says so plainly.
+  After upgrading, re-preview anything still pending: a preview stored by an
+  older release carries the old unsalted hash, so its execute fails closed
+  with `stale_approval` rather than running.
+
 ## [0.26.1] — 2026-10-24
 
 ### Security
