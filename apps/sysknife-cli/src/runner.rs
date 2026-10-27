@@ -1385,17 +1385,18 @@ pub async fn run_audit_checkpoint(
         log.print_stderr(&format!("note: {note}"));
     }
     let db_path = resolved_store.path();
+    let system_store = db_path == std::path::Path::new(sysknife_core::PRODUCTION_DATABASE_PATH);
 
     // Load the private signing key (same location rules as `verify`).
     let key_path = sysknife_daemon::audit_chain::resolve_audit_key_path(db_path);
-    require_exists(&key_path, "audit key")?;
+    require_exists(&key_path, "audit key", system_store)?;
     let key = AuditKey::load_or_generate(&key_path).map_err(|e| {
         eprintln!("audit key load failed: {e}");
         CliError::Exit(2)
     })?;
 
     // Read the current chain tip from the local sqlite store.
-    require_exists(db_path, "audit database")?;
+    require_exists(db_path, "audit database", system_store)?;
     let store = TransactionStore::open_read_only(db_path).map_err(|e| {
         eprintln!("opening audit database failed: {e}");
         CliError::Exit(2)
@@ -2605,14 +2606,36 @@ fn finish_spinner(spinner: &Option<indicatif::ProgressBar>) {
     }
 }
 
-/// Check that `path` exists; if not, print `"{what} not found at <path>"` to
-/// stderr and fail with exit code 2 (used by `run_audit_checkpoint`, which
-/// checks both the audit key file and the audit database file this way).
-fn require_exists(path: &std::path::Path, what: &str) -> Result<(), CliError> {
+/// Explain a missing checkpoint input. An EACCES probe on the packaged store
+/// means `Path::exists()` returned false for a root-owned 0700 directory, so
+/// tell the operator how to reach the actual audit chain.
+fn checkpoint_missing_path_message(
+    path: &std::path::Path,
+    what: &str,
+    inaccessible_system_store: bool,
+) -> String {
+    if inaccessible_system_store {
+        format!(
+            "{what} not found or not readable at {}; the system daemon's store is root-owned, so run this command under sudo",
+            path.display()
+        )
+    } else {
+        format!("{what} not found at {}", path.display())
+    }
+}
+
+/// Check that `path` exists; if not, print a diagnosis to stderr and fail with
+/// exit code 2. `system_store` enables the sudo hint when EACCES hides the
+/// packaged database or key path.
+fn require_exists(path: &std::path::Path, what: &str, system_store: bool) -> Result<(), CliError> {
     if path.exists() {
         Ok(())
     } else {
-        eprintln!("{what} not found at {}", path.display());
+        let inaccessible_system_store = system_store && sysknife_core::path_is_present(path);
+        eprintln!(
+            "{}",
+            checkpoint_missing_path_message(path, what, inaccessible_system_store)
+        );
         Err(CliError::Exit(2))
     }
 }
@@ -2757,6 +2780,17 @@ mod approval_view_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checkpoint_reports_when_the_system_store_needs_sudo() {
+        let path = std::path::Path::new("/var/lib/sysknife/daemon.audit-key");
+        let inaccessible = checkpoint_missing_path_message(path, "audit key", true);
+        assert!(inaccessible.contains("run this command under sudo"));
+        assert!(inaccessible.contains(path.to_str().unwrap()));
+
+        let missing = checkpoint_missing_path_message(path, "audit key", false);
+        assert!(!missing.contains("sudo"));
+    }
 
     #[cfg(unix)]
     mod intent_preview_failure_tests {

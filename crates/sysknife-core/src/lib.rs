@@ -170,6 +170,18 @@ pub fn resolve_audit_store() -> AuditStoreChoice {
     let explicit = std::env::var_os("SYSKNIFE_DATABASE_PATH").map(PathBuf::from);
     let per_user = default_database_path();
     let system = PathBuf::from(PRODUCTION_DATABASE_PATH);
+    resolve_audit_store_from(explicit, per_user, system)
+}
+
+/// Resolve the audit store with an explicit system path. The production entry
+/// point supplies [`PRODUCTION_DATABASE_PATH`]; tests can supply a temporary
+/// file to exercise the packaged-install fallback without writing under
+/// `/var/lib`.
+pub fn resolve_audit_store_from(
+    explicit: Option<PathBuf>,
+    per_user: PathBuf,
+    system: PathBuf,
+) -> AuditStoreChoice {
     let per_user_exists = path_is_present(&per_user);
     let system_exists = path_is_present(&system);
     choose_audit_store_with_paths(explicit, per_user, per_user_exists, system, system_exists)

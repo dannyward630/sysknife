@@ -1962,6 +1962,20 @@ mod boundary_tests {
 mod tests {
     use super::*;
 
+    #[test]
+    fn cli_and_mcp_audit_readers_do_not_bypass_the_shared_store_resolver() {
+        let per_user_resolver = format!("sysknife_core::{}(", "default_database_path");
+        for (file, source) in [
+            ("runner.rs", include_str!("runner.rs")),
+            ("mcp_server.rs", include_str!("mcp_server.rs")),
+        ] {
+            assert!(
+                !source.contains(&per_user_resolver),
+                "{file} must resolve audit paths through resolve_audit_store()"
+            );
+        }
+    }
+
     // -----------------------------------------------------------------------
     // An agent must be told when the verdict is about a different machine
     // -----------------------------------------------------------------------
@@ -2002,13 +2016,8 @@ mod tests {
 
         let lacs_config = sysknife_core::config::LacsConfig::default();
         let per_user_path = temp.path().join("xdg/state/sysknife/daemon.sqlite");
-        let audit_store = sysknife_core::choose_audit_store_with_paths(
-            None,
-            per_user_path.clone(),
-            per_user_path.exists(),
-            db_path.clone(),
-            db_path.exists(),
-        );
+        let audit_store =
+            sysknife_core::resolve_audit_store_from(None, per_user_path.clone(), db_path.clone());
         assert!(
             matches!(&audit_store, sysknife_core::AuditStoreChoice::System(_)),
             "a populated system store must win when the per-user store is absent"
