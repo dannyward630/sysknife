@@ -5,7 +5,9 @@
  * install-daemon.js — systemd service installer for sysknife-daemon
  *
  * Contract:
- *   installDaemonService(opts) → Promise<void>
+ *   installDaemonService(opts) → Promise<{
+ *     mode: string, daemonInstalled: boolean, manualSteps: string[]
+ *   }>
  *
  *   opts.ask(question, defaultVal)  — async prompt helper from index.js
  *   opts.daemonMode                 — 'system' | 'user' | 'skip'; null asks
@@ -349,13 +351,36 @@ async function installDaemonService(opts) {
   }
 
   // Default: choice === '1' or anything else → user service.
+  if (!isExecutableFile(daemonBinPath)) {
+    const message = `Daemon binary is missing or not executable: ${daemonBinPath}`;
+    const manualSteps = [`Install or build an executable daemon binary at: ${daemonBinPath}`];
+    warn(message);
+    step(manualSteps[0]);
+    return { mode: 'user', daemonInstalled: false, manualSteps };
+  }
+
   // Migrate before the unit is written and started, so the daemon opens the
   // moved database rather than creating a fresh one beside it.
   const migration = migrateLegacyDatabase();
   if (migration) warn(migration);
-  await _installUserService(daemonBinPath);
+  const userInstall = await _installUserService(daemonBinPath);
   warn(userModeCapabilityWarning());
-  return { mode: 'user', daemonInstalled: true, manualSteps: [] };
+  return {
+    mode: 'user',
+    daemonInstalled: userInstall.daemonInstalled,
+    manualSteps: userInstall.manualSteps,
+  };
+}
+
+/** Return true only for an existing regular file with execute permission. */
+function isExecutableFile(filePath) {
+  try {
+    if (!fs.statSync(filePath).isFile()) return false;
+    fs.accessSync(filePath, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Install a user-level service under ~/.config/systemd/user/. */
@@ -385,16 +410,24 @@ async function _installUserService(daemonBinPath) {
   const daemonReloaded = systemctl(['daemon-reload'], true);
   if (!daemonReloaded) {
     warn('systemctl --user daemon-reload failed — run it manually after starting a user session.');
-    return;
+    const manualSteps = [
+      'Run:  systemctl --user daemon-reload',
+      'Run:  systemctl --user enable --now sysknife-daemon',
+    ];
+    for (const manualStep of manualSteps) step(manualStep);
+    return { daemonInstalled: false, manualSteps };
   }
 
   const started = systemctl(['enable', '--now', 'sysknife-daemon'], true);
   if (started) {
     ok('sysknife-daemon user service enabled and started.');
     step('Socket: ' + runtimeSocketPath());
+    return { daemonInstalled: true, manualSteps: [] };
   } else {
     warn('Could not enable/start user service automatically.');
-    step('Run:  systemctl --user enable --now sysknife-daemon');
+    const manualStep = 'Run:  systemctl --user enable --now sysknife-daemon';
+    step(manualStep);
+    return { daemonInstalled: false, manualSteps: [manualStep] };
   }
 }
 
