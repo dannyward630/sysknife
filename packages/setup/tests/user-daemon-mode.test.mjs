@@ -11,11 +11,13 @@ const { installDaemonService } = require('../install-daemon.js');
 async function withFakeHome(fn) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'sysknife-user-service-'));
   const oldEnv = Object.fromEntries(
-    ['HOME', 'USERPROFILE', 'XDG_STATE_HOME'].map((name) => [name, process.env[name]]),
+    ['HOME', 'USERPROFILE', 'XDG_STATE_HOME', 'XDG_RUNTIME_DIR']
+      .map((name) => [name, process.env[name]]),
   );
   process.env.HOME = home;
   process.env.USERPROFILE = home;
   process.env.XDG_STATE_HOME = path.join(home, 'state');
+  process.env.XDG_RUNTIME_DIR = path.join(home, 'runtime');
   try {
     return await fn(home);
   } finally {
@@ -45,6 +47,71 @@ function successfulReloadThenFailedStart() {
     return { status: args[1] === 'daemon-reload' ? 0 : 1 };
   };
 }
+
+function successfulUserServiceInstall(calls) {
+  return (command, args) => {
+    calls.push({ command, args });
+    return { status: 0 };
+  };
+}
+
+test('user service install is complete only after daemon reload and start succeed', async () => {
+  await withFakeHome(async (home) => {
+    await withQuietConsole(async () => {
+      const daemonBinPath = path.join(home, 'bin', 'sysknife-daemon');
+      fs.mkdirSync(path.dirname(daemonBinPath), { recursive: true });
+      fs.writeFileSync(daemonBinPath, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      const calls = [];
+
+      const result = await installDaemonService({
+        ask: async () => '1',
+        daemonMode: 'user',
+        daemonBinPath,
+        hasSystemd: () => true,
+        spawnSync: successfulUserServiceInstall(calls),
+      });
+
+      assert.equal(result.mode, 'user');
+      assert.equal(result.daemonInstalled, true);
+      assert.deepEqual(result.manualSteps, []);
+      assert.deepEqual(calls.map(({ command, args }) => [command, ...args]), [
+        ['loginctl', 'enable-linger'],
+        ['systemctl', '--user', 'daemon-reload'],
+        ['systemctl', '--user', 'enable', '--now', 'sysknife-daemon'],
+      ]);
+    });
+  });
+});
+
+test('user service reload failure returns both recovery commands and skips enable', async () => {
+  await withFakeHome(async (home) => {
+    await withQuietConsole(async () => {
+      const daemonBinPath = path.join(home, 'bin', 'sysknife-daemon');
+      fs.mkdirSync(path.dirname(daemonBinPath), { recursive: true });
+      fs.writeFileSync(daemonBinPath, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      const calls = [];
+
+      const result = await installDaemonService({
+        ask: async () => '1',
+        daemonMode: 'user',
+        daemonBinPath,
+        hasSystemd: () => true,
+        spawnSync: (command, args) => {
+          calls.push({ command, args });
+          return { status: command === 'systemctl' && args.includes('daemon-reload') ? 1 : 0 };
+        },
+      });
+
+      assert.equal(result.mode, 'user');
+      assert.equal(result.daemonInstalled, false);
+      assert.deepEqual(result.manualSteps, [
+        'Run:  systemctl --user daemon-reload',
+        'Run:  systemctl --user enable --now sysknife-daemon',
+      ]);
+      assert.equal(calls.filter(({ command }) => command === 'systemctl').length, 1);
+    });
+  });
+});
 
 test('user service start failure is returned as incomplete setup with a manual step', async () => {
   await withFakeHome(async (home) => {
