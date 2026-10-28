@@ -194,7 +194,7 @@ this is runtime status, NOT the saved configuration; on Ubuntu the saved config 
     ("AddSwap",
      "create a swap file, enable it, and persist to /etc/fstab — params: file* (absolute path), size_mb* (integer MB); High risk"),
     ("RemoveSwap",
-     "disable a swap file, remove it, and drop its /etc/fstab entry — param: file* (must already be a swap file per /proc/swaps or /etc/fstab, and not a symlink); High risk"),
+     "disable and remove a swap file after swapoff succeeds, then drop its /etc/fstab entry; if swapoff fails while it remains active, refuse and preserve both — param: file* (must already be a swap file per /proc/swaps or /etc/fstab, and not a symlink); High risk"),
     // apt pinning (preferences.d) — Ubuntu/Debian only
     ("GetAptPins",
      "show apt pin priorities (apt-cache policy) — param: package (optional); read-only"),
