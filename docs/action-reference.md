@@ -127,7 +127,7 @@ Every row is derived from the live code: the command from each action's `ActionS
 | `AddMount` | `sudo /usr/lib/sysknife/mount-edit --op mount --device /dev/sdb1 --mountpoint /mnt/data --fstype ext4 --options defaults` | High | All | – | – | mount a device and persist it to /etc/fstab with nofail — params: device\* (/dev/.., UUID=.., LABEL=.., //host/share, or host:/export), mountpoint\* (absolute; not a system dir), fstype\* (ext4/xfs/btrfs/vfat/nfs/cifs/…), options (csv, optional); High risk |
 | `RemoveMount` | `sudo /usr/lib/sysknife/mount-edit --op unmount --mountpoint /mnt/data` | High | All | – | – | unmount and drop the /etc/fstab entry for a mountpoint — param: mountpoint\*; High risk |
 | `AddSwap` | `sudo /usr/lib/sysknife/mount-edit --op addswap --file /swapfile --size-mb 2048` | High | All | – | – | create a swap file, enable it, and persist to /etc/fstab — params: file\* (absolute path), size_mb\* (integer MB); High risk |
-| `RemoveSwap` | `sudo /usr/lib/sysknife/mount-edit --op rmswap --file /swapfile` | High | All | – | – | disable a swap file, remove it, and drop its /etc/fstab entry — param: file\* (must already be a swap file per /proc/swaps or /etc/fstab, and not a symlink); High risk |
+| `RemoveSwap` | `sudo /usr/lib/sysknife/mount-edit --op rmswap --file /swapfile` | High | All | – | – | disable and remove a swap file after `swapoff` succeeds, then drop its `/etc/fstab` entry; if `swapoff` fails while it remains active, refuse and preserve both — param: file\* (must already be a swap file per `/proc/swaps` or `/etc/fstab`, and not a symlink); High risk |
 
 ## Log management
 

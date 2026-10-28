@@ -400,6 +400,22 @@ def op_addswap(args) -> None:
         write_fstab(append_fstab_entry(lines, entry))
 
 
+def active_swap_files() -> set:
+    """Absolute paths currently active as swap FILES, excluding partitions."""
+    active = set()
+    try:
+        with open(PROC_SWAPS, "r") as fh:
+            next(fh, None)  # header: Filename Type Size Used Priority
+            for line in fh:
+                fields = line.split()
+                if len(fields) >= 2 and fields[1] == "file":
+                    active.add(fields[0])
+    except OSError:
+        # No /proc/swaps (a container, a test harness): fstab alone decides.
+        pass
+    return active
+
+
 def known_swap_files() -> set:
     """Absolute paths this host actually knows as swap FILES.
 
@@ -408,17 +424,7 @@ def known_swap_files() -> set:
     is configured to have). Swap *partitions* are excluded from both — they are
     block devices, never something to unlink — as are commented-out fstab lines.
     """
-    known = set()
-    try:
-        with open(PROC_SWAPS, "r") as fh:
-            next(fh, None)  # header: Filename Type Size Used Priority
-            for line in fh:
-                fields = line.split()
-                if len(fields) >= 2 and fields[1] == "file":
-                    known.add(fields[0])
-    except OSError:
-        # No /proc/swaps (a container, a test harness): fstab alone decides.
-        pass
+    known = active_swap_files()
     for line in read_fstab():
         if line.lstrip().startswith("#"):
             continue
@@ -446,7 +452,13 @@ def op_rmswap(args) -> None:
     # have accepted the link as swap in the first place.
     if os.path.islink(path):
         die(f"{path!r} is a symlink, not a swap file; refusing to remove it")
-    subprocess.run([SWAPOFF, path], check=False, stderr=subprocess.DEVNULL)
+    swapoff = subprocess.run([SWAPOFF, path], check=False, stderr=subprocess.PIPE)
+    if swapoff.returncode != 0 and path in active_swap_files():
+        detail = swapoff.stderr.decode(errors="replace").strip()
+        message = f"swapoff failed for active swap file {path!r}"
+        if detail:
+            message += f": {detail}"
+        die(message)
     lines = read_fstab()
     kept = remove_fstab_lines(lines, fstab_field1, path)
     if len(kept) != len(lines):
