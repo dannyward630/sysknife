@@ -83,6 +83,12 @@ jobs:
       - name: Check GitHub release creation is safe to re-run
         run: bash tests/release/release-create-rerun.test.sh
 
+      - name: Check release tags require main ancestry and successful CI
+        run: bash tests/release/release-main-guard.test.sh
+
+      - name: Check release CI lookup fails closed
+        run: bash tests/release/check-release-ci.test.sh
+
       - name: Check npm publishes only after crates.io
         run: bash tests/release/release-publish-order.test.sh
 
