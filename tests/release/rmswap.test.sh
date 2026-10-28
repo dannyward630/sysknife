@@ -125,7 +125,6 @@ with tempfile.TemporaryDirectory() as d:
     if code in (None, 0):
         failures.append(f"op_rmswap did NOT refuse a symlinked swap path (exit {code!r})")
 
-    # 4. The action must still work: a genuine, declared swap file is removed.
     # 4. A stale fstab entry is not active swap. A failed swapoff is expected
     #    here, so the file and its declaration can still be removed.
     code, _ = run_rmswap(
@@ -156,7 +155,26 @@ with tempfile.TemporaryDirectory() as d:
     if "device is busy" not in message:
         failures.append("op_rmswap did not include swapoff stderr in its refusal")
 
-    # 6. ...and a successful swapoff still removes a genuinely active file.
+    # 6. If /proc/swaps cannot be read, a failed swapoff is not evidence that
+    #    the active path is safe to remove. Preserve the file and fstab entry.
+    mod.PROC_SWAPS = os.path.join(d, "missing-swaps")
+    code, message = run_rmswap(
+        active,
+        swapoff_returncode=1,
+        swapoff_stderr=b"cannot inspect active swaps",
+    )
+    if code in (None, 0):
+        failures.append(f"op_rmswap treated unreadable /proc/swaps as inactive (exit {code!r})")
+    if not os.path.exists(active):
+        failures.append("op_rmswap deleted a swap file when it could not inspect /proc/swaps")
+    if not any(mod.fstab_field1(line) == active for line in mod.read_fstab()):
+        failures.append("op_rmswap removed the fstab entry when /proc/swaps was unreadable")
+    if "cannot inspect active swaps" not in message:
+        failures.append("op_rmswap did not include swapoff stderr when /proc/swaps was unreadable")
+
+    mod.PROC_SWAPS = swaps
+
+    # 7. A successful swapoff still removes a genuinely active file.
     code, _ = run_rmswap(active)
     if code not in (None, 0):
         failures.append(f"op_rmswap refused a legitimate active swap file (exit {code!r})")
