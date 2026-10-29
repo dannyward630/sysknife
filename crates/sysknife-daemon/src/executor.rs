@@ -1976,7 +1976,7 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
             let mut domains = Vec::new();
             if let Some(arr) = optional_str_array(params, "domains")? {
                 for s in arr {
-                    domains.push(validated_domain(s, "domains")?);
+                    domains.push(validated_domain(&s, "domains")?);
                 }
             } else if let Some(d) = domain {
                 domains.push(validated_domain(d, "domain")?);
