@@ -1709,8 +1709,8 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         // ── grub ─────────────────────────────────────────────────────────
         "GrubGetKargs" => Ok(grub::grub_get_kargs()),
         "GrubSetKargs" => {
-            let append = optional_str_array(params, "append")?.unwrap_or_default();
-            let delete = optional_str_array(params, "delete")?.unwrap_or_default();
+            let append = str_array_or_empty(params, "append")?;
+            let delete = str_array_or_empty(params, "delete")?;
             // Validate each arg in both lists. `append` gets the charset check
             // (rejects `=`, `,`, shell metacharacters — the latter also blocks
             // CSV injection into the helper's comma-separated list) *and* the
@@ -1831,7 +1831,7 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         "ResolvectlStatus" => Ok(resolvectl::resolvectl_status()),
         "ResolvectlSetDns" => {
             let interface = validated_safe_arg(require_str(params, "interface")?, "interface")?;
-            let raw_servers = optional_str_array(params, "servers")?.unwrap_or_default();
+            let raw_servers = str_array_or_empty(params, "servers")?;
             if raw_servers.is_empty() {
                 return Err(ExecutorError::MissingParam("servers"));
             }
@@ -2131,19 +2131,20 @@ fn require_str<'a>(params: &'a Value, key: &'static str) -> Result<&'a str, Exec
     }
 }
 
+/// Read an optional string; an absent or null key is treated as absent.
 fn optional_str<'a>(
     params: &'a Value,
     key: &'static str,
 ) -> Result<Option<&'a str>, ExecutorError> {
     match params.get(key) {
-        None => Ok(None),
+        None | Some(Value::Null) => Ok(None),
         Some(v) => v.as_str().map(Some).ok_or(ExecutorError::InvalidParam(key)),
     }
 }
 
-/// Extract an optional string param and validate it. An absent key or an empty
-/// string yields `None` (the filter is simply omitted); a present non-empty
-/// value is passed through `validator`, propagating any validation error.
+/// Extract an optional string param and validate it. An absent or null key, or
+/// an empty string, yields `None` (the filter is simply omitted); a present
+/// non-empty value is passed through `validator`, propagating any validation error.
 fn optional_validated<F>(
     params: &Value,
     key: &'static str,
@@ -2260,7 +2261,7 @@ fn require_bool(params: &Value, key: &'static str) -> Result<bool, ExecutorError
 
 fn optional_bool(params: &Value, key: &'static str) -> Result<Option<bool>, ExecutorError> {
     match params.get(key) {
-        None => Ok(None),
+        None | Some(Value::Null) => Ok(None),
         Some(v) => v
             .as_bool()
             .map(Some)
@@ -2270,14 +2271,14 @@ fn optional_bool(params: &Value, key: &'static str) -> Result<Option<bool>, Exec
 
 fn optional_u64(params: &Value, key: &'static str) -> Result<Option<u64>, ExecutorError> {
     match params.get(key) {
-        None => Ok(None),
+        None | Some(Value::Null) => Ok(None),
         Some(v) => v.as_u64().map(Some).ok_or(ExecutorError::InvalidParam(key)),
     }
 }
 
 fn optional_i64(params: &Value, key: &'static str) -> Result<Option<i64>, ExecutorError> {
     match params.get(key) {
-        None => Ok(None),
+        None | Some(Value::Null) => Ok(None),
         Some(v) => v.as_i64().map(Some).ok_or(ExecutorError::InvalidParam(key)),
     }
 }
@@ -2328,12 +2329,13 @@ fn str_array_or_empty(params: &Value, key: &'static str) -> Result<Vec<String>, 
     }
 }
 
+/// Read an optional string array; an absent or null key is treated as absent.
 fn optional_str_array(
     params: &Value,
     key: &'static str,
 ) -> Result<Option<Vec<String>>, ExecutorError> {
     match params.get(key) {
-        None => Ok(None),
+        None | Some(Value::Null) => Ok(None),
         Some(Value::Array(arr)) => arr
             .iter()
             .map(|v| {
@@ -2773,7 +2775,14 @@ mod tests {
         ];
 
         for (action, key, valid_params) in cases {
-            for invalid_value in [json!("wrong type"), json!(-1), json!(1.5), json!(null)] {
+            let mut params = valid_params.clone();
+            params[key] = json!(null);
+            assert!(
+                build_action_spec(action, &params).is_ok(),
+                "{action}.{key} must treat null as absent: {params}"
+            );
+
+            for invalid_value in [json!("wrong type"), json!(-1), json!(1.5)] {
                 let mut params = valid_params.clone();
                 params[key] = invalid_value.clone();
                 assert!(
@@ -2788,7 +2797,7 @@ mod tests {
     }
 
     #[test]
-    fn optional_signed_and_string_action_params_reject_wrong_types() {
+    fn optional_signed_and_string_action_params_validate_types_and_nulls() {
         let numeric_cases: &[(&str, &str)] = &[
             ("dcredit", "SetPasswordPolicy"),
             ("ucredit", "SetPasswordPolicy"),
@@ -2796,7 +2805,15 @@ mod tests {
             ("ocredit", "SetPasswordPolicy"),
         ];
         for (key, action) in numeric_cases {
-            for invalid in [json!("0"), json!(1.5), json!(null)] {
+            let mut params =
+                json!({"minlen": 16, "dcredit": 0, "ucredit": 0, "lcredit": 0, "ocredit": 0});
+            params[key] = json!(null);
+            assert!(
+                build_action_spec(action, &params).is_ok(),
+                "{action}.{key} must treat null as absent: {params}"
+            );
+
+            for invalid in [json!("0"), json!(1.5)] {
                 let mut params =
                     json!({"minlen": 16, "dcredit": 0, "ucredit": 0, "lcredit": 0, "ocredit": 0});
                 params[key] = invalid.clone();
@@ -2870,6 +2887,11 @@ mod tests {
             ),
             (
                 "GrubSetKargs",
+                "append",
+                json!({"append": "quiet", "delete": ["splash"]}),
+            ),
+            (
+                "GrubSetKargs",
                 "delete",
                 json!({"append": ["quiet"], "delete": [false]}),
             ),
@@ -2891,11 +2913,35 @@ mod tests {
             ),
             (
                 "ObtainCertificate",
+                "domains",
+                json!({"domains": ["example.com", 42], "email": "ops@example.com"}),
+            ),
+            (
+                "ObtainCertificate",
                 "challenge",
                 json!({"domain": "example.com", "email": "ops@example.com", "challenge": 42}),
             ),
         ];
         for (action, key, params) in string_cases {
+            let mut null_params = params.clone();
+            null_params[key] = json!(null);
+            match (*action, *key) {
+                ("GrubSetKargs", "append") => null_params["delete"] = json!(["splash"]),
+                ("ObtainCertificate", "domains") => null_params["domain"] = json!("example.com"),
+                _ => {}
+            }
+            let null_result = build_action_spec(action, &null_params);
+            if (*action, *key) == ("ResolvectlSetDns", "servers") {
+                assert!(
+                    matches!(null_result, Err(ExecutorError::MissingParam("servers"))),
+                    "{action}.{key} must treat null as absent: {null_params}"
+                );
+            } else {
+                assert!(
+                    null_result.is_ok(),
+                    "{action}.{key} must treat null as absent: {null_params}"
+                );
+            }
             assert!(
                 matches!(
                     build_action_spec(action, params),
@@ -2904,6 +2950,14 @@ mod tests {
                 "{action}.{key} must reject its wrong type: {params}"
             );
         }
+
+        assert!(matches!(
+            build_action_spec(
+                "SetAptPin",
+                &json!({"name": "test", "package": "vim", "pin": "version 1.*", "priority": "500"})
+            ),
+            Err(ExecutorError::InvalidParam("priority"))
+        ));
     }
 
     #[test]
