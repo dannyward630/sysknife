@@ -1,7 +1,7 @@
 {
   "name": "sysknife-shell",
   "private": true,
-  "version": "0.27.0",
+  "version": "0.28.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -23,7 +23,7 @@
     "@vitest/coverage-v8": "^5.0.5",
     "jsdom": "^30.1.3",
     "typescript": "^7.0.2",
-    "vite": "^8.3.4",
+    "vite": "^8.3.5",
     "vitest": "^5.0.3"
   },
   "overrides": {
