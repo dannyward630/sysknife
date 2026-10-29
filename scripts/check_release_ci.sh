@@ -17,8 +17,9 @@ if [[ -z "${GH_TOKEN:-}" ]]; then
     exit 1
 fi
 
-run_ids_output="$(gh api --paginate --slurp \
-    --jq '[.[].check_runs[]? | (.details_url // "") | try capture("/actions/runs/(?<run_id>[0-9]+)/job/").run_id catch empty] | unique | .[]' \
+release_sha_lower="$(printf '%s' "$release_sha" | tr '[:upper:]' '[:lower:]')"
+run_ids_output="$(gh api --paginate \
+    --jq '.check_runs[]? | (.details_url // "") | try capture("/actions/runs/(?<run_id>[0-9]+)/job/").run_id catch empty' \
     "repos/${repo}/commits/${release_sha}/check-runs?per_page=100")" || {
     printf '::error::Could not read check runs for release commit %s\n' "$release_sha" >&2
     exit 1
@@ -29,26 +30,27 @@ if [[ -z "$run_ids_output" ]]; then
     exit 1
 fi
 
-mapfile -t run_ids <<< "$run_ids_output"
-for run_id in "${run_ids[@]}"; do
+run_ids_output="$(sort -u <<< "$run_ids_output")"
+while IFS= read -r run_id; do
     if [[ ! "$run_id" =~ ^[0-9]+$ ]]; then
         printf '::error::GitHub returned an invalid Actions run ID for release commit %s\n' "$release_sha" >&2
         exit 1
     fi
 
     run_data="$(gh api "repos/${repo}/actions/runs/${run_id}" \
-        --jq '[.name, .head_sha, .status, .conclusion] | @tsv')" || {
+        --jq '[.name, .head_sha, .event, .status, .conclusion] | @tsv')" || {
         printf '::error::Could not read Actions run %s for release commit %s\n' "$run_id" "$release_sha" >&2
         exit 1
     }
-    IFS=$'\t' read -r workflow_name run_sha status conclusion <<< "$run_data"
+    IFS=$'\t' read -r workflow_name run_sha event status conclusion <<< "$run_data"
+    run_sha_lower="$(printf '%s' "$run_sha" | tr '[:upper:]' '[:lower:]')"
 
-    if [[ "$workflow_name" == ci && "${run_sha,,}" == "${release_sha,,}" && \
+    if [[ "$workflow_name" == ci && "$event" == push && "$run_sha_lower" == "$release_sha_lower" && \
         "$status" == completed && "$conclusion" == success ]]; then
         printf 'Found successful ci workflow run %s for release commit %s\n' "$run_id" "$release_sha"
         exit 0
     fi
-done
+done <<< "$run_ids_output"
 
 printf '::error::No completed successful ci workflow run was found for release commit %s\n' "$release_sha" >&2
 exit 1

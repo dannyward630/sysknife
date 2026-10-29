@@ -18,6 +18,11 @@ cat > "$tmp/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "$*" == *"--slurp"* && "$*" == *"--jq"* ]]; then
+    printf '%s\n' 'the --slurp option is not supported with --jq or --template' >&2
+    exit 1
+fi
+
 case "$*" in
     *"/check-runs?per_page=100"*)
         [[ "${RELEASE_CI_TEST_MODE:-success}" == "no-check-runs" ]] || printf '101\n'
@@ -25,11 +30,12 @@ case "$*" in
     *"/actions/runs/101"*)
         sha="${GITHUB_SHA:?}"
         case "${RELEASE_CI_TEST_MODE:-success}" in
-            success) printf 'ci\t%s\tcompleted\tsuccess\n' "$sha" ;;
-            wrong-workflow) printf 'not-ci\t%s\tcompleted\tsuccess\n' "$sha" ;;
-            wrong-sha) printf 'ci\t%s\tcompleted\tsuccess\n' "$(printf '0%.0s' {1..40})" ;;
-            failure) printf 'ci\t%s\tcompleted\tfailure\n' "$sha" ;;
-            incomplete) printf 'ci\t%s\tin_progress\t\n' "$sha" ;;
+            success) printf 'ci\t%s\tpush\tcompleted\tsuccess\n' "$sha" ;;
+            wrong-workflow) printf 'not-ci\t%s\tpush\tcompleted\tsuccess\n' "$sha" ;;
+            wrong-event) printf 'ci\t%s\tpull_request\tcompleted\tsuccess\n' "$sha" ;;
+            wrong-sha) printf 'ci\t%s\tpush\tcompleted\tsuccess\n' "$(printf '0%.0s' {1..40})" ;;
+            failure) printf 'ci\t%s\tpush\tcompleted\tfailure\n' "$sha" ;;
+            incomplete) printf 'ci\t%s\tpush\tin_progress\t\n' "$sha" ;;
         esac
         ;;
     *)
@@ -53,7 +59,7 @@ run_helper() {
 
 run_helper success
 
-for mode in no-check-runs wrong-workflow wrong-sha failure incomplete; do
+for mode in no-check-runs wrong-workflow wrong-event wrong-sha failure incomplete; do
     if output="$(run_helper "$mode" 2>&1)"; then
         printf 'FAIL: %s unexpectedly passed\n' "$mode" >&2
         exit 1

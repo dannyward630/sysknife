@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
-python - <<'PY'
+python3 - <<'PY'
 from pathlib import Path
 import sys
 
@@ -34,9 +34,14 @@ for required in (
     'git merge-base --is-ancestor "$GITHUB_SHA" origin/main',
     "::error::",
     "$GITHUB_SHA",
+    "exit 1",
 ):
     if required not in guard_run:
         sys.exit(f"release main guard: ancestry step is missing {required!r}")
+if preflight.get("continue-on-error") is True or any(
+    step.get("continue-on-error") is True for step in steps
+):
+    sys.exit("release main guard: preflight must not continue after a failed guard")
 
 ci_guard = next(
     (step for step in steps if step.get("name") == "Require successful CI on tagged commit"),
@@ -44,6 +49,8 @@ ci_guard = next(
 )
 if ci_guard is None or "bash scripts/check_release_ci.sh" not in ci_guard.get("run", ""):
     sys.exit("release main guard: preflight must require a successful CI run")
+if ci_guard.get("continue-on-error") is True:
+    sys.exit("release main guard: CI verification must not be allowed to fail")
 
 permissions = preflight.get("permissions", {})
 if permissions.get("checks") != "read" or permissions.get("actions") != "read":
