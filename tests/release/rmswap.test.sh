@@ -15,7 +15,9 @@ SCRIPT="$ROOT/packaging/sysknife-mount-edit"
 [ -f "$SCRIPT" ] || { echo "FAIL: $SCRIPT not found"; exit 1; }
 
 python3 - "$SCRIPT" <<'PY'
+import contextlib
 import importlib.util
+import io
 import os
 import sys
 import tempfile
@@ -43,20 +45,31 @@ class Args:
 
 
 class FakeCompleted:
-    returncode = 0
-    stderr = b""
+    def __init__(self, returncode=0, stderr=b""):
+        self.returncode = returncode
+        self.stderr = stderr
 
 
-def run_rmswap(path):
-    """Run op_rmswap with swapoff stubbed out. Returns the SystemExit code, or
-    None if it ran to completion."""
+def run_rmswap(path, swapoff_returncode=0, swapoff_stderr=b""):
+    """Run op_rmswap with swapoff stubbed out; return its exit code and stderr."""
     real_run = mod.subprocess.run
-    mod.subprocess.run = lambda *a, **k: FakeCompleted()
+    result = FakeCompleted(swapoff_returncode, swapoff_stderr)
+
+    def fake_run(*args, **kwargs):
+        if kwargs.get("stderr") == mod.subprocess.PIPE:
+            return result
+        return FakeCompleted(swapoff_returncode, None)
+
+    mod.subprocess.run = fake_run
+    captured_stderr = io.StringIO()
     try:
-        mod.op_rmswap(Args(path))
-        return None
-    except SystemExit as exc:
-        return exc.code
+        with contextlib.redirect_stderr(captured_stderr):
+            try:
+                mod.op_rmswap(Args(path))
+                code = None
+            except SystemExit as exc:
+                code = exc.code
+        return code, captured_stderr.getvalue()
     finally:
         mod.subprocess.run = real_run
 
@@ -67,21 +80,24 @@ with tempfile.TemporaryDirectory() as d:
     victim = os.path.join(d, "shadow")
     declared = os.path.join(d, "declared-swap")
     active = os.path.join(d, "active-swap")
+    active_only = os.path.join(d, "active-only-swap")
 
     with open(victim, "w") as fh:
         fh.write("root:!:19000:0:99999:7:::\n")
-    for p in (declared, active):
+    for p in (declared, active, active_only):
         with open(p, "w") as fh:
             fh.write("swapdata")
 
     with open(fstab, "w") as fh:
         fh.write("UUID=1234\t/\text4\tdefaults\t0\t1\n")
         fh.write(f"{declared}\tnone\tswap\tsw,nofail\t0\t0\n")
+        fh.write(f"{active}\tnone\tswap\tsw,nofail\t0\t0\n")
         # A commented-out entry must not make a path "known".
         fh.write(f"#{victim}\tnone\tswap\tsw,nofail\t0\t0\n")
     with open(swaps, "w") as fh:
         fh.write("Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n")
         fh.write(f"{active}\t\t\t\tfile\t\t2097148\t\t0\t\t-2\n")
+        fh.write(f"{active_only}\t\t\t\tfile\t\t2097148\t\t0\t\t-1\n")
         fh.write("/dev/sda2\t\t\t\tpartition\t2097148\t\t0\t\t-3\n")
 
     mod.FSTAB = fstab
@@ -94,13 +110,17 @@ with tempfile.TemporaryDirectory() as d:
         failures.append("known_swap_files missed the fstab-declared swap file")
     if active not in known:
         failures.append("known_swap_files missed the active /proc/swaps file")
+    if active_only not in known:
+        failures.append("known_swap_files missed the /proc/swaps-only file")
+    if any(mod.fstab_field1(line) == active_only for line in mod.read_fstab()):
+        failures.append("/proc/swaps-only test file unexpectedly appeared in fstab")
     if victim in known:
         failures.append("known_swap_files treated a commented-out fstab line as a swap file")
     if "/dev/sda2" in known:
         failures.append("known_swap_files treated a swap partition as a removable swap file")
 
     # 2. THE BUG: an unrelated root-owned file must not be deleted.
-    code = run_rmswap(victim)
+    code, _ = run_rmswap(victim)
     if code in (None, 0):
         failures.append(f"op_rmswap did NOT refuse an unknown path (exit {code!r})")
     if not os.path.exists(victim):
@@ -113,23 +133,72 @@ with tempfile.TemporaryDirectory() as d:
     os.symlink(victim, link)
     with open(fstab, "a") as fh:
         fh.write(f"{link}\tnone\tswap\tsw,nofail\t0\t0\n")
-    code = run_rmswap(link)
+    code, _ = run_rmswap(link)
     if code in (None, 0):
         failures.append(f"op_rmswap did NOT refuse a symlinked swap path (exit {code!r})")
 
-    # 4. The action must still work: a genuine, declared swap file is removed.
-    code = run_rmswap(declared)
+    # 4. A stale fstab entry is not active swap. A failed swapoff is expected
+    #    here, so the file and its declaration can still be removed.
+    code, _ = run_rmswap(
+        declared,
+        swapoff_returncode=1,
+        swapoff_stderr=b"not an active swap area",
+    )
     if code not in (None, 0):
         failures.append(f"op_rmswap refused a legitimate declared swap file (exit {code!r})")
     if os.path.exists(declared):
         failures.append("op_rmswap did not remove a legitimate declared swap file")
+    if any(mod.fstab_field1(line) == declared for line in mod.read_fstab()):
+        failures.append("op_rmswap kept the fstab entry for an inactive swap file")
 
-    # 5. ...and so is one that is only known because it is currently active.
-    code = run_rmswap(active)
+    # 5. A failed swapoff for an active file must preserve both the file and its
+    #    fstab entry and surface the utility's stderr.
+    code, message = run_rmswap(
+        active,
+        swapoff_returncode=1,
+        swapoff_stderr=b"device is busy",
+    )
+    if code in (None, 0):
+        failures.append(f"op_rmswap did NOT refuse a failed swapoff for an active file (exit {code!r})")
+    if not os.path.exists(active):
+        failures.append("op_rmswap DELETED an active swap file after swapoff failed")
+    if not any(mod.fstab_field1(line) == active for line in mod.read_fstab()):
+        failures.append("op_rmswap removed the fstab entry after swapoff failed")
+    if "device is busy" not in message:
+        failures.append("op_rmswap did not include swapoff stderr in its refusal")
+
+    # 6. If /proc/swaps cannot be read, a failed swapoff is not evidence that
+    #    the active path is safe to remove. Preserve the file and fstab entry.
+    mod.PROC_SWAPS = os.path.join(d, "missing-swaps")
+    code, message = run_rmswap(
+        active,
+        swapoff_returncode=1,
+        swapoff_stderr=b"cannot inspect active swaps",
+    )
+    if code in (None, 0):
+        failures.append(f"op_rmswap treated unreadable /proc/swaps as inactive (exit {code!r})")
+    if not os.path.exists(active):
+        failures.append("op_rmswap deleted a swap file when it could not inspect /proc/swaps")
+    if not any(mod.fstab_field1(line) == active for line in mod.read_fstab()):
+        failures.append("op_rmswap removed the fstab entry when /proc/swaps was unreadable")
+    if "cannot inspect active swaps" not in message:
+        failures.append("op_rmswap did not include swapoff stderr when /proc/swaps was unreadable")
+
+    mod.PROC_SWAPS = swaps
+
+    # 7. A successful swapoff still removes a genuinely active file.
+    code, _ = run_rmswap(active)
     if code not in (None, 0):
         failures.append(f"op_rmswap refused a legitimate active swap file (exit {code!r})")
     if os.path.exists(active):
         failures.append("op_rmswap did not remove a legitimate active swap file")
+
+    # 8. A file known only from /proc/swaps (no fstab line) is still removable.
+    code, _ = run_rmswap(active_only)
+    if code not in (None, 0):
+        failures.append(f"op_rmswap refused a swap file known only from /proc/swaps (exit {code!r})")
+    if os.path.exists(active_only):
+        failures.append("op_rmswap did not remove a swap file known only from /proc/swaps")
 
 if failures:
     for f in failures:
