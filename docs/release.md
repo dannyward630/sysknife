@@ -130,6 +130,11 @@ scripts/release_rehearsal.sh --full --output dist/rehearsal
 Use a clean, reviewed `main` checkout. Replace `v0.2.5` with the intended
 version.
 
+Push the release tag only after the `ci` workflow has completed successfully for
+the exact commit on `main`. Release preflight refuses a missing, pending, or
+failed run; if it starts too early, rerun the failed release workflow after CI
+finishes.
+
 ```bash
 scripts/bump_version.sh 0.2.5
 cargo nextest run --workspace --locked
